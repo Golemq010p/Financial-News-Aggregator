@@ -1,5 +1,6 @@
-streamlit
+requests
 pandas
-supabase
+beautifulsoup4
 python-dotenv
+supabase
 groq
