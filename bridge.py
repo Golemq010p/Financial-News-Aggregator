@@ -38,6 +38,7 @@ class FinancialJuiceWatcher:
         self.email = os.environ.get("FINANCIAL_JUICE_EMAIL")
         self.password = os.environ.get("FINANCIAL_JUICE_PASSWORD")
         self.info_token = ""
+        self.cal_filters = None
         
         # Initialize Groq
         api_key = os.environ.get("GROQ_API_KEY")
@@ -91,6 +92,14 @@ class FinancialJuiceWatcher:
             # Refresh home to get the info token
             home_res = self.session.get(self.base_url, headers=self.headers)
             match = re.search(r"var\s+info\s*=\s*'([^']*)'", home_res.text)
+            
+            filter_match = re.search(r'var\s+UserCalFilters\s*=\s*({[^;]+});?', home_res.text)
+            if filter_match:
+                try:
+                    self.cal_filters = json.loads(filter_match.group(1))
+                    print("[OK] Extracted custom calendar filters.")
+                except Exception as e:
+                    print(f"  [!] Could not parse filters: {e}")
             
             if match:
                 self.info_token = match.group(1)
@@ -263,7 +272,7 @@ class FinancialJuiceWatcher:
             params = {
                 "info": f'"{self.info_token}"',
                 "TimeOffset": "0",
-                "Filter": "1",
+                "Filter": "0",
                 "Country": ""
             }
             res = self.session.get(cal_url, params=params, headers=self.headers)
@@ -298,13 +307,33 @@ class FinancialJuiceWatcher:
                     return
 
                 for ev in events:
+                    if self.cal_filters:
+                        valid_countries = [c.get('code') for c in self.cal_filters.get('Countries', []) if c.get('code')]
+                        valid_imps = [str(i.get('id')) for i in self.cal_filters.get('Imp', []) if i.get('id') is not None]
+                        
+                        ev_country = str(ev.get('CountryCode', ''))
+                        ev_imp = str(ev.get('ImpID', ''))
+                        
+                        if valid_countries and ev_country not in valid_countries:
+                            continue
+                        if valid_imps and ev_imp not in valid_imps:
+                            continue
+
+                    imp_val = ev.get('Importance') 
+                    if not imp_val:
+                        imp_id = str(ev.get('ImpID', ''))
+                        if imp_id == '3': imp_val = 'High'
+                        elif imp_id == '2': imp_val = 'Medium'
+                        elif imp_id == '1': imp_val = 'Low'
+                        else: imp_val = 'Low'
+
                     self.backend.push_calendar(
                         event_id=ev.get('ID'),
                         event_date=ev.get('Date'),
                         event_time=ev.get('Time'),
                         title=ev.get('Title'),
-                        country=ev.get('Country'),
-                        importance=ev.get('Importance'),
+                        country=ev.get('CountryCode', ev.get('Country')),
+                        importance=imp_val,
                         actual=ev.get('Actual'),
                         forecast=ev.get('Forecast'),
                         previous=ev.get('Previous')
