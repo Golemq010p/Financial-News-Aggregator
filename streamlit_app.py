@@ -342,7 +342,7 @@ def news_table():
 # --- Main Layout ---
 
 def main():
-    st.title("FinancialJuice Bridge Dashboard")
+    st.title("Financial News Aggregator Dashboard")
     
     news_ticker()
     
