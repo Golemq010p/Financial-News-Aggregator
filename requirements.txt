@@ -1,9 +1,5 @@
 streamlit
-supabase
-pywin32
-python-dotenv
 pandas
-requests
-websocket-client
-beautifulsoup4
-pytz
+supabase
+python-dotenv
+groq
