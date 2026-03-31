@@ -97,10 +97,10 @@ st.markdown("""
 def news_ticker():
     if not backend: return
     try:
-        response = backend.supabase.table("news").select("*").order("id", desc=True).limit(5).execute()
+        response = backend.supabase.table("news").select("*").eq("is_critical", True).order("id", desc=True).limit(5).execute()
         news_items = response.data
         if news_items:
-            ticker_text = "  |  ".join([f"⚡ {item['headline']}" for item in news_items])
+            ticker_text = "  |  ".join([f"🚨 {item['headline']}" for item in news_items])
             st.markdown(f'<div class="news-ticker"><marquee scrollamount="5">{ticker_text}</marquee></div>', unsafe_allow_html=True)
     except:
         pass
