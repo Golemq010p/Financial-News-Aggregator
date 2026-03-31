@@ -113,19 +113,25 @@ class FinancialJuiceWatcher:
             return False
 
     def refresh_token(self):
-        """Fetches the home page to update the info token without a full re-login if session is valid."""
+        """Fetches the home page to update the info token. Re-logs in if session expired."""
         try:
             home_res = self.session.get(self.base_url, headers=self.headers)
+            
+            # If UserCalFilters is missing, we are likely logged out (guest mode).
+            filter_match = re.search(r'var\s+UserCalFilters\s*=\s*({[^;]+});?', home_res.text)
+            if not filter_match:
+                print("  [!] Session appears expired (no custom filters found). Re-authenticating...")
+                self.login()
+                return
+
             match = re.search(r"var\s+info\s*=\s*'([^']*)'", home_res.text)
             if match:
                 self.info_token = match.group(1)
             
-            filter_match = re.search(r'var\s+UserCalFilters\s*=\s*({[^;]+});?', home_res.text)
-            if filter_match:
-                try:
-                    self.cal_filters = json.loads(filter_match.group(1))
-                except Exception:
-                    pass
+            try:
+                self.cal_filters = json.loads(filter_match.group(1))
+            except Exception:
+                pass
         except Exception as e:
             print(f"  [!] Token refresh error: {e}")
 
