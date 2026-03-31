@@ -52,18 +52,31 @@ class SupabaseBackend:
             return self.supabase.table("news").insert(data).execute()
 
     def push_calendar(self, event_id, event_date, event_time, title, country, importance, actual=None, forecast=None, previous=None):
+        try:
+            res = self.supabase.table("calendar").select("country, importance").eq("id", event_id).execute()
+            existing = res.data[0] if res.data else None
+        except Exception as e:
+            print(f"  [DB ERROR] Fetching calendar {event_id}: {e}")
+            existing = None
+
         data = {
             "id": event_id,
             "event_date": event_date,
             "event_time": event_time,
             "title": title,
-            "country": country,
-            "importance": importance,
             "actual": actual,
             "forecast": forecast,
             "previous": previous
         }
-        return self.supabase.table("calendar").upsert(data).execute()
+
+        if existing:
+            data["country"] = existing.get("country") or country
+            data["importance"] = existing.get("importance") or importance
+            return self.supabase.table("calendar").update(data).eq("id", event_id).execute()
+        else:
+            data["country"] = country
+            data["importance"] = importance
+            return self.supabase.table("calendar").insert(data).execute()
 
 if __name__ == "__main__":
     # Test push
