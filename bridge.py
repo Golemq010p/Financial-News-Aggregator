@@ -372,20 +372,20 @@ def main():
     
     if watcher.login():
         print("Starting news polling (Every 60 seconds)...")
-        print("Economic Calendar sync scheduled for the hour and half-hour marks.")
+        print("Economic Calendar sync scheduled for every 10 minutes.")
         
         # Initial sync on startup
         watcher.poll_calendar()
-        last_sync_block = datetime.now().minute // 30
+        last_sync_block = datetime.now().minute // 10
         
         while True:
             watcher.poll()
             
             now = datetime.now()
-            current_block = now.minute // 30
+            current_block = now.minute // 10
             
-            # Sync calendar on the 00 and 30 minute marks
-            if now.minute % 30 == 0 and current_block != last_sync_block:
+            # Sync calendar on the 00, 10, 20, 30, 40, and 50 minute marks
+            if now.minute % 10 == 0 and current_block != last_sync_block:
                 watcher.poll_calendar()
                 last_sync_block = current_block
                 
