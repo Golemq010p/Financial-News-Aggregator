@@ -21,7 +21,7 @@ class SupabaseBackend:
         }
         return self.supabase.table("signals").insert(data).execute()
 
-    def push_news(self, news_id, headline, source, posted_at, labels=None, category=None, is_critical=False):
+    def push_news(self, news_id, headline, source, posted_at, labels=None, category=None, is_critical=False, image_url=None):
         # 1. Check if record exists and its current category
         try:
             res = self.supabase.table("news").select("category").eq("id", news_id).execute()
@@ -36,7 +36,8 @@ class SupabaseBackend:
             "source": source,
             "posted_at": posted_at,
             "labels": labels or [],
-            "is_critical": is_critical
+            "is_critical": is_critical,
+            "image_url": image_url
         }
 
         if existing:

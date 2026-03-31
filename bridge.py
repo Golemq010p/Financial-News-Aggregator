@@ -262,6 +262,9 @@ class FinancialJuiceWatcher:
                 level = item.get('Level', '')
                 is_critical = "active-critical" in level
                 
+                img_path = item.get('Img', '')
+                image_url = f"https://www.financialjuice.com{img_path}" if img_path else None
+                
                 if self.backend.push_news(
                     news_id=item.get('NewsID'),
                     headline=headline,
@@ -269,7 +272,8 @@ class FinancialJuiceWatcher:
                     posted_at=posted_at_iso,
                     labels=item.get('Labels', []),
                     category=category,
-                    is_critical=is_critical
+                    is_critical=is_critical,
+                    image_url=image_url
                 ):
                     new_count += 1
                     if self.last_news_id != 0:

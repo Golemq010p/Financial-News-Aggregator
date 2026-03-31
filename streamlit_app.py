@@ -302,8 +302,11 @@ def news_table():
                 hl_style = ' style="background-color: rgba(255, 75, 75, 0.2); padding: 5px; border-radius: 5px; border: 1px solid #ff4b4b;"' if is_crit else ""
                 hl_prefix = "🚨 " if is_crit else ""
 
+                has_image = 'image_url' in row and pd.notna(row.get('image_url')) and str(row.get('image_url')).strip() and str(row.get('image_url')) != 'None'
+                img_tag = f'<br><img src="{row.get("image_url")}" style="max-width: 100%; border-radius: 5px; margin-top: 10px; border: 1px solid #333;">' if has_image else ""
+
                 rcol2.markdown(f'<span style="color: {cat_color}; font-weight: bold; font-size: 0.8rem;">{row["category"].upper()}</span>', unsafe_allow_html=True)
-                rcol3.markdown(f'<div{hl_style}>{hl_prefix}**{row["headline"]}**</div>', unsafe_allow_html=True)
+                rcol3.markdown(f'<div{hl_style}>{hl_prefix}**{row["headline"]}**{img_tag}</div>', unsafe_allow_html=True)
                 
                 # Logic for "Analyzed" marker (highlight only when collapsed)
                 is_analyzed = row_id in st.session_state.ai_answers
@@ -359,7 +362,7 @@ def news_table():
 # --- Main Layout ---
 
 def main():
-    st.title("Financial News Aggregator Dashboard")
+    st.title("FinancialJuice Bridge Dashboard")
     
     news_ticker()
     
