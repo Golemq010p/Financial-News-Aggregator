@@ -1,372 +1,392 @@
-import os
-import requests
-import json
-import re
-import time
+import streamlit as st
 import pandas as pd
-from datetime import datetime
-from bs4 import BeautifulSoup
-from dotenv import load_dotenv
-
-# Load env BEFORE backend init
-load_dotenv()
-
+import time
+import os
+from datetime import datetime, timedelta
+import pytz
 from supabase_backend import SupabaseBackend
+from dotenv import load_dotenv
 from groq import Groq
 
-class FinancialJuiceWatcher:
-    def __init__(self):
-        self.backend = SupabaseBackend()
+# Load environment
+load_dotenv()
+
+# Initialize AI Client
+api_key = os.environ.get("GROQ_API_KEY")
+ai_client = Groq(api_key=api_key) if api_key else None
+
+def get_ai_analysis(headline):
+    if not ai_client:
+        return "AI API Key not configured."
+    
+    prompt = f"""As a financial analyst, analyze this headline:
+    "{headline}"
+    
+    1. What are the future implications?
+    2. What impact might this have on the market?
+    
+    Provide a concise, professional analysis."""
+    
+    try:
+        response = ai_client.chat.completions.create(
+            model='llama-3.1-8b-instant',
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"AI Error: {e}"
+
+# Page configuration
+st.set_page_config(
+    page_title="News & Economic Dashboard",
+    page_icon="📅",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# Initialize Backend
+@st.cache_resource
+def get_backend():
+    try:
+        return SupabaseBackend()
+    except Exception as e:
+        st.error(f"Failed to connect to Supabase: {e}")
+        return None
+
+backend = get_backend()
+
+# --- Custom Styling ---
+st.markdown("""
+    <style>
+    .main {
+        background-color: #0e1117;
+        color: #fafafa;
+    }
+    .news-ticker {
+        background-color: #1a1c23;
+        padding: 10px;
+        border-bottom: 2px solid #00ff00;
+        font-family: 'Courier New', Courier, monospace;
+        white-space: nowrap;
+        overflow: hidden;
+        margin-bottom: 20px;
+    }
+    .cal-card {
+        background-color: #1e2130;
+        padding: 10px;
+        border-radius: 5px;
+        border-left: 5px solid #00ff00;
+        margin-bottom: 10px;
+    }
+    .importance-high { border-left-color: #ff4b4b; }
+    .importance-medium { border-left-color: #ffa500; }
+    .importance-low { border-left-color: #00ff00; }
+    .critical-news {
+        background-color: rgba(255, 75, 75, 0.2) !important;
+        border: 1px solid #ff4b4b !important;
+        border-radius: 5px;
+        padding: 5px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- Components ---
+
+def news_ticker():
+    if not backend: return
+    try:
+        response = backend.supabase.table("news").select("*").order("id", desc=True).limit(5).execute()
+        news_items = response.data
+        if news_items:
+            ticker_text = "  |  ".join([f"⚡ {item['headline']}" for item in news_items])
+            st.markdown(f'<div class="news-ticker"><marquee scrollamount="5">{ticker_text}</marquee></div>', unsafe_allow_html=True)
+    except:
+        pass
+
+def calendar_section():
+    if not backend: return
+    
+    try:
+        # Get start and end dates (next 5 days)
+        now_utc = datetime.now(pytz.UTC)
+        end_date = (now_utc + timedelta(days=5)).date()
         
-        # Initialize last_news_id from DB
-        try:
-            res = self.backend.supabase.table("news").select("id").order("id", desc=True).limit(1).execute()
-            self.last_news_id = res.data[0]["id"] if res.data else 0
-        except Exception as e:
-            print(f"Warning: Could not fetch last_news_id from DB, starting fresh. {e}")
-            self.last_news_id = 0
-        self.session = requests.Session()
-        self.base_url = "https://www.financialjuice.com/home"
-        self.api_url = "https://live.financialjuice.com/FJService.asmx/Startup"
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/json, text/javascript, */*; q=0.01",
-            "Content-Type": "application/json; charset=utf-8",
-            "X-Requested-With": "XMLHttpRequest",
-            "Referer": "https://www.financialjuice.com/",
-        }
-        self.email = os.environ.get("FINANCIAL_JUICE_EMAIL")
-        self.password = os.environ.get("FINANCIAL_JUICE_PASSWORD")
-        self.info_token = ""
-        self.cal_filters = None
+        response = backend.supabase.table("calendar")\
+            .select("*")\
+            .gte("event_date", now_utc.date().isoformat())\
+            .lte("event_date", end_date.isoformat())\
+            .order("event_date")\
+            .order("event_time")\
+            .execute()
         
-        # Initialize Groq
-        api_key = os.environ.get("GROQ_API_KEY")
-        if api_key:
+        events = response.data
+        if not events:
+            st.info("No upcoming calendar events found for the next 5 days.")
+            return
+
+        # 1. Prepare data with UTC timestamps for comparison
+        df = pd.DataFrame(events)
+        
+        # UI Filtering
+        all_countries = sorted([c for c in df['country'].unique() if c])
+        
+        default_countries = [c for c in ['US', 'GB', 'CH', 'JP'] if c in all_countries]
+        
+        fcol1, _ = st.columns([1, 3])
+        with fcol1:
+            selected_countries = st.multiselect("Countries", options=all_countries, default=default_countries, label_visibility="collapsed", placeholder="🌍 Countries...")
+            
+        df = df[df['country'].isin(selected_countries)]
+        
+        if df.empty:
+            st.info("No calendar events match the selected filters.")
+            return
+        
+        def get_utc_dt(row):
             try:
-                self.client = Groq(api_key=api_key)
-                print("--- Groq AI Client initialized ---")
-            except Exception as e:
-                self.client = None
-                print(f"[AI ERROR] Groq Init: {e}")
+                if ":" in row['event_time']:
+                    dt_str = f"{row['event_date']} {row['event_time']}"
+                    return datetime.strptime(dt_str, "%Y-%m-%d %H:%M").replace(tzinfo=pytz.UTC)
+            except:
+                pass
+            # Fallback for "All Day" or malformed time
+            return datetime.strptime(row['event_date'], "%Y-%m-%d").replace(tzinfo=pytz.UTC)
+
+        df['dt_utc'] = df.apply(get_utc_dt, axis=1)
+        now_utc = datetime.now(pytz.UTC)
+        
+        # Find the single "NEXT" event (the first one that hasn't happened yet)
+        future_events = df[df['dt_utc'] >= now_utc].sort_values('dt_utc')
+        next_event_id = future_events.iloc[0]['id'] if not future_events.empty else None
+
+        def to_eastern_date(row):
+            eastern = pytz.timezone('America/New_York')
+            return row['dt_utc'].astimezone(eastern).strftime('%a, %b %d')
+
+        df['display_date'] = df.apply(to_eastern_date, axis=1)
+        
+        unique_dates = df['display_date'].unique()
+        cols = st.columns(len(unique_dates))
+        
+        for idx, date_str in enumerate(unique_dates):
+            with cols[idx]:
+                st.markdown(f"#### 📌 {date_str}")
+                
+                with st.container(height=400, border=False):
+                    group = df[df['display_date'] == date_str]
+                    
+                    for _, row in group.iterrows():
+                        is_next = (row['id'] == next_event_id)
+                        is_past = (row['dt_utc'] < now_utc)
+                        
+                        # Style logic
+                        opacity = "0.6" if is_past else "1.0"
+                        bg_style = "background-color: #1e2130;"
+                        
+                        # Importance color
+                        imp_color = "#00ff00" # Low
+                        if row['importance'] == 'High': imp_color = "#ff4b4b"
+                        elif row['importance'] == 'Medium': imp_color = "#ffa500"
+                        
+                        container_style = f"{bg_style} opacity: {opacity}; border-left: 4px solid {imp_color};"
+                        
+                        # Special NEXT highlight
+                        if is_next:
+                            container_style = f"background-color: #2a2d3e; border: 2px solid #ffd700; border-left: 8px solid {imp_color};"
+                        
+                        # Convert display time to Eastern
+                        eastern = pytz.timezone('America/New_York')
+                        display_time_est = row['dt_utc'].astimezone(eastern).strftime("%H:%M")
+                        if row['event_time'] == "All Day": display_time_est = "All Day"
+
+                        next_badge = '<span style="background-color: #ffd700; color: black; padding: 2px 5px; border-radius: 3px; font-size: 0.7rem; font-weight: bold; margin-left: 10px;">NEXT EVENT</span>' if is_next else ""
+
+                        st.markdown(f"""
+                            <div style="{container_style} padding: 6px 10px; border-radius: 5px; margin-bottom: 8px; position: relative;">
+                                <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 8px;">
+                                    <div style="display: flex; align-items: baseline; gap: 8px; overflow: hidden; flex-grow: 1;">
+                                        <span style="font-size: 0.85rem; color: #ffd700; font-weight: bold; flex-shrink: 0;">{display_time_est}</span>
+                                        <span style="font-size: 0.9rem; font-weight: bold; color: #ffffff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{row['title']} {next_badge}</span>
+                                    </div>
+                                    <div style="font-size: 0.8rem; color: {'#dddddd' if is_past else '#ffffff'}; flex-shrink: 0; white-space: nowrap;">
+                                        A: <span style="font-weight: 800;">{row['actual'] or '-'}</span> | 
+                                        F: <span style="font-weight: 800;">{row['forecast'] or '-'}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        """, unsafe_allow_html=True)
+
+    except Exception as e:
+        st.error(f"Error loading calendar: {e}")
+
+def news_table():
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.header("📰 Latest Financial Headlines")
+    
+    with col2:
+        available_cats = ['All', 'Critical', 'politics', 'finance', 'company news', 'others']
+        selected_cat = st.selectbox(
+            "Filter Category:", 
+            available_cats, 
+            index=0,
+            help="Filter by AI-assigned category"
+        )
+    
+    # Session state for news loading limit
+    if 'news_limit' not in st.session_state:
+        st.session_state.news_limit = 100
+
+    # Calculate start of today (Eastern) in UTC
+    try:
+        eastern = pytz.timezone('America/New_York')
+        now_est = datetime.now(eastern)
+        today_start_est = now_est.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start_utc = today_start_est.astimezone(pytz.utc).isoformat()
+        
+        query = backend.supabase.table("news").select("*").order("id", desc=True)
+        
+        if selected_cat == 'All':
+            query = query.limit(st.session_state.news_limit)
+        elif selected_cat == 'Critical':
+            query = query.eq('is_critical', True).gte('posted_at', today_start_utc).limit(1000)
         else:
-            self.client = None
-            print("Warning: GROQ_API_KEY not found in .env. AI categorization disabled.")
-
-    def login(self):
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Attempting login to FinancialJuice...")
-        try:
-            res = self.session.get(self.base_url, headers=self.headers)
-            if res.status_code != 200:
-                print(f"[ERROR] Home page error: {res.status_code}")
-                return False
-                
-            soup = BeautifulSoup(res.text, 'html.parser')
+            # Fetch ALL matching headlines for the day (UTC today)
+            query = query.eq('category', selected_cat).gte('posted_at', today_start_utc).limit(1000)
             
-            viewstate_el = soup.find('input', {'id': '__VIEWSTATE'})
-            generator_el = soup.find('input', {'id': '__VIEWSTATEGENERATOR'})
-            
-            if not viewstate_el:
-                print("[ERROR] Could not find __VIEWSTATE. Are you blocked?")
-                return False
-                
-            viewstate = viewstate_el['value']
-            generator = generator_el['value']
-            
-            payload = {
-                'ctl00$ScriptManager1': 'ctl00$SignInSignUp$loginForm1$UpdatePanel1|ctl00$SignInSignUp$loginForm1$btnLogin',
-                '__VIEWSTATE': viewstate,
-                '__VIEWSTATEGENERATOR': generator,
-                'ctl00$SignInSignUp$loginForm1$inputEmail': self.email,
-                'ctl00$SignInSignUp$loginForm1$inputPassword': self.password,
-                'ctl00$SignInSignUp$loginForm1$btnLogin': 'Login',
-                '__ASYNCPOST': 'true'
-            }
-            
-            login_headers = self.headers.copy()
-            login_headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8"
-            login_headers["X-MicrosoftAjax"] = "Delta=true"
-            
-            self.session.post(self.base_url, data=payload, headers=login_headers)
-            
-            # Refresh home to get the info token
-            home_res = self.session.get(self.base_url, headers=self.headers)
-            match = re.search(r"var\s+info\s*=\s*'([^']*)'", home_res.text)
-            
-            filter_match = re.search(r'var\s+UserCalFilters\s*=\s*({[^;]+});?', home_res.text)
-            if filter_match:
-                try:
-                    self.cal_filters = json.loads(filter_match.group(1))
-                    print("[OK] Extracted custom calendar filters.")
-                except Exception as e:
-                    print(f"  [!] Could not parse filters: {e}")
-            
-            if match:
-                self.info_token = match.group(1)
-                print(f"[OK] Successfully logged in. Token extracted.")
-                return True
-            else:
-                print("[ERROR] Login failed: Could not find info token in page source.")
-                return False
-        except Exception as e:
-            print(f"❌ Login error: {e}")
-            return False
-
-    def parse_time_to_iso(self, time_str):
-        """Convert 'HH:MM Mon DD' to ISO 8601 string for current year."""
-        try:
-            # FinancialJuice uses '19:28 Mar 17' format
-            dt = pd.to_datetime(time_str)
-            # Ensure it's treated as UTC and has the current year (pd.to_datetime does this by default if year is missing)
-            return dt.isoformat()
-        except Exception as e:
-            print(f"  [TIME ERROR] Could not parse '{time_str}': {e}")
-            return datetime.now().isoformat()
-
-    def categorize_batch(self, headlines):
-        """Categorize a list of headlines in a single AI request to save quota."""
-        if not self.client or not headlines:
-            return {h: "others" for h in headlines}
+        response = query.execute()
+        df = pd.DataFrame(response.data)
         
-        # Build numbered list for prompt
-        list_str = "\n".join([f"{i+1}. {h}" for i, h in enumerate(headlines)])
-        
-        prompt = f"""Categorize each of these financial headlines into exactly one of these: 'politics', 'finance', 'company news', 'others'.
-        Respond with a JSON object where keys are the numbers 1 to {len(headlines)} and values are the lowercase category names.
-        Headlines:
-        {list_str}
-        
-        Respond with ONLY the JSON object."""
-        
-        try:
-            response = self.client.chat.completions.create(
-                model='llama-3.1-8b-instant',
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            raw_text = response.choices[0].message.content.strip()
-            # Clean JSON if model added markdown blocks
-            if "```json" in raw_text:
-                raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in raw_text:
-                raw_text = raw_text.split("```")[1].strip()
+        if not df.empty:
+            if 'category' not in df.columns:
+                df['category'] = 'others'
+            
+            if 'posted_at' in df.columns:
+                # Use format='mixed' to handle both ISO and old 'HH:MM Mon DD' without warnings
+                df['posted_at'] = pd.to_datetime(df['posted_at'], format='mixed', errors='coerce', utc=True)
+                eastern = pytz.timezone('America/New_York')
+                df['display_time'] = df['posted_at'].dt.tz_convert(eastern).dt.strftime('%H:%M:%S')
+
+            # Render News Rows
+            # Header Row
+            hcol1, hcol2, hcol3, hcol4 = st.columns([1, 1, 4, 1.5])
+            hcol1.markdown("**Time (ET)**")
+            hcol2.markdown("**AI Cat**")
+            hcol3.markdown("**Headline**")
+            hcol4.markdown("**Analysis**")
+            st.markdown("---")
+
+            # Session state for AI answers and active item
+            if 'ai_answers' not in st.session_state:
+                st.session_state.ai_answers = {}
+            if 'active_ai_id' not in st.session_state:
+                st.session_state.active_ai_id = None
+
+            for idx, row in df.iterrows():
+                row_id = row['id']
+                rcol1, rcol2, rcol3, rcol4 = st.columns([1, 1, 4, 1.5])
                 
-            cat_map = json.loads(raw_text)
-            
-            # Map back to headlines
-            results = {}
-            valid_cats = ['politics', 'finance', 'company news', 'others']
-            for i, h in enumerate(headlines):
-                val = str(cat_map.get(str(i+1), "others")).lower()
-                # Ensure it's a valid category
-                matched = "others"
-                for v in valid_cats:
-                    if v in val:
-                        matched = v
-                        break
-                results[h] = matched
-            return results
-        except Exception as e:
-            print(f"  [AI ERROR] Batch Categorization: {e}")
-            return {h: "others" for h in headlines}
-
-    def poll(self):
-        info_val = f'"{self.info_token}"' if self.info_token else ""
-        params = {
-            "info": info_val, 
-            "TimeOffset": "0",
-            "oldID": "0",
-            "tabID": "0",
-            "TickerID": "0",
-            "FeedCompanyID": "0",
-            "strSearch": "",
-            "extraNID": "0"
-        }
-        
-        try:
-            response = self.session.get(self.api_url, params=params, headers=self.headers, timeout=30)
-            if response.status_code != 200:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Polling Error (Status {response.status_code})")
-                return
-
-            try:
-                if response.text.startswith("<?xml"):
-                    import xml.etree.ElementTree as ET
-                    root = ET.fromstring(response.text)
-                    raw_data = json.loads(root.text)
-                else:
-                    raw_data = response.json()
-            except Exception as parse_err:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Parse Error (News): {parse_err}")
-                return
-
-            data = raw_data.get('d', raw_data)
-            if isinstance(data, str):
-                data = json.loads(data)
-            
-            news_items = data.get('News', [])
-            if not news_items:
-                return
-
-            batch_max_id = max(item.get('NewsID', 0) for item in news_items)
-            
-            # Identify new items and collect headlines
-            new_items_to_process = []
-            headlines_to_cat = []
-            
-            for item in reversed(news_items):
-                n_id = item.get('NewsID')
-                if n_id and n_id > self.last_news_id:
-                    new_items_to_process.append(item)
-                    headlines_to_cat.append(item.get('Title', 'No Title'))
-            
-            if not new_items_to_process:
-                if self.last_news_id != 0:
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Polling: No new headlines. (Current: {batch_max_id})")
-                else:
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Initialized tracker with {len(news_items)} items. Latest ID: {batch_max_id}")
-                self.last_news_id = batch_max_id
-                return
-
-            # Categorize in ONE AI call
-            print(f"  --- Categorizing {len(headlines_to_cat)} new items... ---")
-            cat_map = self.categorize_batch(headlines_to_cat)
-            
-            # Push to Supabase
-            new_count = 0
-            for item in new_items_to_process:
-                headline = item.get('Title', 'No Title')
-                category = cat_map.get(headline, "others")
-                posted_at_raw = item.get('PostedLong')
-                posted_at_iso = self.parse_time_to_iso(posted_at_raw)
+                rcol1.write(f"_{row['display_time']}_")
                 
-                level = item.get('Level', '')
-                is_critical = "active-critical" in level
+                cat_color = {
+                    'politics': '#ff4b4b',
+                    'finance': '#00ffc8',
+                    'company news': '#1c83e1',
+                    'others': '#888888'
+                }.get(row['category'], '#888888')
                 
-                if self.backend.push_news(
-                    news_id=item.get('NewsID'),
-                    headline=headline,
-                    source="FinancialJuice",
-                    posted_at=posted_at_iso,
-                    labels=item.get('Labels', []),
-                    category=category,
-                    is_critical=is_critical
-                ):
-                    new_count += 1
-                    if self.last_news_id != 0:
-                        print(f"  [NEW] [{category.upper()}] {headline[:60]}...")
+                # Check for critical status
+                is_crit = row.get('is_critical', False)
+                hl_style = ' style="background-color: rgba(255, 75, 75, 0.2); padding: 5px; border-radius: 5px; border: 1px solid #ff4b4b;"' if is_crit else ""
+                hl_prefix = "🚨 " if is_crit else ""
 
-            if new_count > 0 and self.last_news_id != 0:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Polling: Added {new_count} new headlines.")
-
-            self.last_news_id = batch_max_id
-
-        except Exception as e:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] News Loop Exception: {e}")
-
-    def poll_calendar(self):
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Polling Economic Calendar...")
-        try:
-            cal_url = "https://live.financialjuice.com/FJService.asmx/GetCalendar"
-            params = {
-                "info": f'"{self.info_token}"',
-                "TimeOffset": "0",
-                "Filter": "0",
-                "Country": ""
-            }
-            res = self.session.get(cal_url, params=params, headers=self.headers)
-            
-            if res.status_code == 200:
-                try:
-                    if res.text.strip().startswith("<?xml"):
-                        import xml.etree.ElementTree as ET
-                        root = ET.fromstring(res.text)
-                        if not root.text:
-                            print("  [!] Warning: Calendar XML payload is empty.")
-                            return
-                        data = json.loads(root.text)
-                    else:
-                        data = res.json()
-                except Exception as parse_err:
-                    print(f"  [Parse Error] Calendar: {parse_err}")
-                    return
+                rcol2.markdown(f'<span style="color: {cat_color}; font-weight: bold; font-size: 0.8rem;">{row["category"].upper()}</span>', unsafe_allow_html=True)
+                rcol3.markdown(f'<div{hl_style}>{hl_prefix}**{row["headline"]}**</div>', unsafe_allow_html=True)
                 
-                # Handle ASP.NET 'd' wrapper
-                inner = data.get('d', data)
-                if isinstance(inner, str):
-                    try:
-                        events = json.loads(inner)
-                    except:
-                        events = []
-                else:
-                    events = inner.get('Calendar', inner) if isinstance(inner, dict) else inner
+                # Logic for "Analyzed" marker (highlight only when collapsed)
+                is_analyzed = row_id in st.session_state.ai_answers
+                is_active = st.session_state.active_ai_id == row_id
                 
-                if not isinstance(events, list):
-                    print(f"  [!] Warning: Unexpected calendar data format. (Type: {type(events)})")
-                    return
+                # We want to "mark" it (blue border) only after it's been analyzed AND collapsed
+                show_marker = is_analyzed and not is_active
+                button_key = f"ai_btn_{row_id}"
+                
+                if show_marker:
+                    # Inject style targeted to this specific button's container
+                    st.markdown(f"""
+                        <style>
+                        div#btn-container-{row_id} button {{
+                            border: 2px solid #007bff !important;
+                            box-shadow: 0 0 8px rgba(0,123,255,0.4) !important;
+                        }}
+                        </style>
+                    """, unsafe_allow_html=True)
 
-                for ev in events:
-                    if self.cal_filters:
-                        valid_countries = [c.get('code') for c in self.cal_filters.get('Countries', []) if c.get('code')]
-                        valid_imps = [str(i.get('id')) for i in self.cal_filters.get('Imp', []) if i.get('id') is not None]
-                        
-                        ev_country = str(ev.get('CountryCode', ''))
-                        ev_imp = str(ev.get('ImpID', ''))
-                        
-                        if valid_countries and ev_country not in valid_countries:
-                            continue
-                        if valid_imps and ev_imp not in valid_imps:
-                            continue
+                # Ask AI Button Wrapper
+                with rcol4:
+                    st.markdown(f'<div id="btn-container-{row_id}">', unsafe_allow_html=True)
+                    if st.button("Ask an AI 🤖", key=button_key, use_container_width=True):
+                        if st.session_state.active_ai_id == row_id:
+                            st.session_state.active_ai_id = None # Toggle Close
+                        else:
+                            st.session_state.active_ai_id = row_id # Open
+                            if row_id not in st.session_state.ai_answers:
+                                with st.spinner("Analyzing..."):
+                                    answer = get_ai_analysis(row['headline'])
+                                    st.session_state.ai_answers[row_id] = answer
+                        st.rerun()
+                    st.markdown('</div>', unsafe_allow_html=True)
+                
+                # Show answer only if ACTIVE
+                if is_active and is_analyzed:
+                    st.info(st.session_state.ai_answers[row_id])
+                
+                st.markdown('<div style="margin-bottom: 5px; border-bottom: 1px solid #333;"></div>', unsafe_allow_html=True)
 
-                    imp_val = ev.get('Importance') 
-                    if not imp_val:
-                        imp_id = str(ev.get('ImpID', ''))
-                        if imp_id == '3': imp_val = 'High'
-                        elif imp_id == '2': imp_val = 'Medium'
-                        elif imp_id == '1': imp_val = 'Low'
-                        else: imp_val = 'Low'
+            # Infinite Scroll Load More
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🔄 Click to Load More Headlines...", use_container_width=True):
+                st.session_state.news_limit += 100
+                st.rerun()
 
-                    self.backend.push_calendar(
-                        event_id=ev.get('ID'),
-                        event_date=ev.get('Date'),
-                        event_time=ev.get('Time'),
-                        title=ev.get('Title'),
-                        country=ev.get('CountryCode', ev.get('Country')),
-                        importance=imp_val,
-                        actual=ev.get('Actual'),
-                        forecast=ev.get('Forecast'),
-                        previous=ev.get('Previous')
-                    )
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Calendar Sync: Processed {len(events)} events.")
-            else:
-                print(f"  ⚠️ Calendar Sync Error: Status {res.status_code}")
-        except Exception as e:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Calendar Error: {e}")
+        else:
+            st.info("No news headlines found yet.")
+    except Exception as e:
+        st.warning(f"Could not fetch news: {e}")
+
+# --- Main Layout ---
 
 def main():
-    watcher = FinancialJuiceWatcher()
+    st.title("FinancialJuice Bridge Dashboard")
     
-    if watcher.login():
-        print("Starting news polling (Every 60 seconds)...")
-        print("Economic Calendar sync scheduled for the hour and half-hour marks.")
+    news_ticker()
+    
+    with st.expander("📅 Economic Calendar (Next 5 Days)", expanded=False):
+        calendar_section()
         
-        # Initial sync on startup
-        watcher.poll_calendar()
-        last_sync_block = datetime.now().minute // 30
-        
-        while True:
-            watcher.poll()
-            
-            now = datetime.now()
-            current_block = now.minute // 30
-            
-            # Sync calendar on the 00 and 30 minute marks
-            if now.minute % 30 == 0 and current_block != last_sync_block:
-                watcher.poll_calendar()
-                last_sync_block = current_block
-                
-            time.sleep(60)
+    with st.expander("📈 Earnings Hub Calendar", expanded=False):
+        st.components.v1.html(
+            """
+            <iframe
+              src="https://earningshub.com/embed/calendar?theme=dark&calendarView=week&filter=popular"
+              title="Earnings Hub Calendar"
+              style="width: 100%; height: 600px; border: none;"
+            ></iframe>
+            """,
+            height=600,
+        )
+    
+    st.write("---")
+    
+    news_table()
+
+    if st.button("Refresh Now"):
+        st.rerun()
+
+    time.sleep(15)
+    st.rerun()
 
 if __name__ == "__main__":
     main()
