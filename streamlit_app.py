@@ -132,7 +132,7 @@ def calendar_section():
         # UI Filtering
         all_countries = sorted([c for c in df['country'].unique() if c])
         
-        default_countries = [c for c in ['US', 'GB', 'CH', 'JP'] if c in all_countries]
+        default_countries = [c for c in ['US', 'GB', 'CH', 'JP', 'Global'] if c in all_countries]
         
         fcol1, _ = st.columns([1, 3])
         with fcol1:
@@ -359,7 +359,7 @@ def news_table():
 # --- Main Layout ---
 
 def main():
-    st.title("Financial News Aggregator Dashboard")
+    st.title("FinancialJuice Bridge Dashboard")
     
     news_ticker()
     
