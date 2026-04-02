@@ -5,33 +5,25 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-def load_keys():
-    # 1. Try environment first (Codespaces)
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
-    
-    # 2. If empty, try to read from Streamlit's local secret file
-    if not url or not key:
-        try:
-            secrets = toml.load(".streamlit/secrets.toml")
-            url = secrets.get("SUPABASE_URL")
-            key = secrets.get("SUPABASE_KEY")
-        except (FileNotFoundError, Exception):
-            pass
-            
-    return url, key
-
 class SupabaseBackend:
     def __init__(self):
-        # 1. Get the keys using your new function
-        url, key = load_keys() 
+        # 1. Try to get from environment (.env or Codespace secrets)
+        url = os.environ.get("SUPABASE_URL")
+        key = os.environ.get("SUPABASE_KEY")
         
-        # 2. Check if they exist before trying to use them
+        # 2. Fallback to Streamlit secrets if running via 'streamlit run'
+        if not url or not key:
+            try:
+                import streamlit as st
+                url = st.secrets.get("SUPABASE_URL")
+                key = st.secrets.get("SUPABASE_KEY")
+            except:
+                pass
+
         if not url or not key:
             raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in .env or secrets.toml")
             
-        # 3. Initialize the client (Properly indented inside __init__)
-        self.supabase: Client = create_client(url, key) 
+        self.supabase: Client = create_client(url, key)
 
     def push_signal(self, symbol, signal_type, price, metadata=None):
         data = {
