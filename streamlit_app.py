@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh # Make sure to pip install this too!
 import pandas as pd
 import time
 import os
@@ -362,6 +363,9 @@ def news_table():
 # --- Main Layout ---
 
 def main():
+    # Run this every 60 seconds to refresh the UI and fetch new data from Supabase
+    st_autorefresh(interval=60 * 1000, key="datarefresh")
+
     st.title("Financial News Aggregator Dashboard")
     
     news_ticker()
@@ -388,8 +392,8 @@ def main():
     if st.button("Refresh Now"):
         st.rerun()
 
-    time.sleep(15)
-    st.rerun()
+    #time.sleep(15)
+    #st.rerun()
 
 if __name__ == "__main__":
     main()

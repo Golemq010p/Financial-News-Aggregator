@@ -1,7 +1,7 @@
-requests
+streamlit
+streamlit-autorefresh
 pandas
-beautifulsoup4
-python-dotenv
 supabase
+python-dotenv
 groq
 pytz
