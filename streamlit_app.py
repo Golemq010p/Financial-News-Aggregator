@@ -392,7 +392,7 @@ def main():
     if st.button("Refresh Now"):
         st.rerun()
 
-    #time.sleep(15)
+    #time.sleep(10)
     #st.rerun()
 
 if __name__ == "__main__":
