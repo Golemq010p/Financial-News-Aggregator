@@ -1,5 +1,4 @@
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh # Make sure to pip install this too!
 import pandas as pd
 import time
 import os
@@ -306,8 +305,11 @@ def news_table():
                 has_image = 'image_url' in row and pd.notna(row.get('image_url')) and str(row.get('image_url')).strip() and str(row.get('image_url')) != 'None'
                 img_tag = f'<br><img src="{row.get("image_url")}" style="max-width: 100%; border-radius: 5px; margin-top: 10px; border: 1px solid #333;">' if has_image else ""
 
+                has_body = 'body' in row and pd.notna(row.get('body')) and str(row.get('body')).strip()
+                body_tag = f'<div style="font-size: 0.85rem; color: #bbbbbb; margin-top: 5px; line-height: 1.3;">{row["body"]}</div>' if has_body else ""
+
                 rcol2.markdown(f'<span style="color: {cat_color}; font-weight: bold; font-size: 0.8rem;">{row["category"].upper()}</span>', unsafe_allow_html=True)
-                rcol3.markdown(f'<div{hl_style}>{hl_prefix}**{row["headline"]}**{img_tag}</div>', unsafe_allow_html=True)
+                rcol3.markdown(f'<div{hl_style}>{hl_prefix}**{row["headline"]}**{body_tag}{img_tag}</div>', unsafe_allow_html=True)
                 
                 # Logic for "Analyzed" marker (highlight only when collapsed)
                 is_analyzed = row_id in st.session_state.ai_answers
@@ -363,9 +365,6 @@ def news_table():
 # --- Main Layout ---
 
 def main():
-    # Run this every 60 seconds to refresh the UI and fetch new data from Supabase
-    st_autorefresh(interval=60 * 1000, key="datarefresh")
-
     st.title("Financial News Aggregator Dashboard")
     
     news_ticker()
@@ -392,8 +391,8 @@ def main():
     if st.button("Refresh Now"):
         st.rerun()
 
-    #time.sleep(10)
-    #st.rerun()
+    time.sleep(10)
+    st.rerun()
 
 if __name__ == "__main__":
     main()
