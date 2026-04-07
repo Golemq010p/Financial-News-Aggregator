@@ -1,5 +1,4 @@
 import os
-import toml
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
@@ -7,22 +6,10 @@ load_dotenv()
 
 class SupabaseBackend:
     def __init__(self):
-        # 1. Try to get from environment (.env or Codespace secrets)
-        url = os.environ.get("SUPABASE_URL")
-        key = os.environ.get("SUPABASE_KEY")
-        
-        # 2. Fallback to Streamlit secrets if running via 'streamlit run'
+        url: str = os.environ.get("SUPABASE_URL")
+        key: str = os.environ.get("SUPABASE_KEY")
         if not url or not key:
-            try:
-                import streamlit as st
-                url = st.secrets.get("SUPABASE_URL")
-                key = st.secrets.get("SUPABASE_KEY")
-            except:
-                pass
-
-        if not url or not key:
-            raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in .env or secrets.toml")
-            
+            raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in .env")
         self.supabase: Client = create_client(url, key)
 
     def push_signal(self, symbol, signal_type, price, metadata=None):
@@ -34,7 +21,7 @@ class SupabaseBackend:
         }
         return self.supabase.table("signals").insert(data).execute()
 
-    def push_news(self, news_id, headline, source, posted_at, labels=None, category=None, is_critical=False, image_url=None):
+    def push_news(self, news_id, headline, source, posted_at, labels=None, category=None, is_critical=False, image_url=None, body=None):
         # 1. Check if record exists and its current category
         try:
             res = self.supabase.table("news").select("category").eq("id", news_id).execute()
@@ -50,7 +37,8 @@ class SupabaseBackend:
             "posted_at": posted_at,
             "labels": labels or [],
             "is_critical": is_critical,
-            "image_url": image_url
+            "image_url": image_url,
+            "body": body
         }
 
         if existing:
@@ -86,10 +74,14 @@ class SupabaseBackend:
         if existing:
             data["country"] = existing.get("country") or country
             data["importance"] = existing.get("importance") or importance
+            if not data["country"] or not data["importance"]:
+                print(f"[{event_id}] Saving nulls?! Existing: {existing}, Polled: C={country}, I={importance}")
             return self.supabase.table("calendar").update(data).eq("id", event_id).execute()
         else:
             data["country"] = country
             data["importance"] = importance
+            if not data["country"] or not data["importance"]:
+                print(f"[{event_id}] Insert nulls?! Polled: C={country}, I={importance}")
             return self.supabase.table("calendar").insert(data).execute()
 
 if __name__ == "__main__":

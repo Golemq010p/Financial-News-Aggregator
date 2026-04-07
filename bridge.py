@@ -279,7 +279,8 @@ class FinancialJuiceWatcher:
                     labels=item.get('Labels', []),
                     category=category,
                     is_critical=is_critical,
-                    image_url=image_url
+                    image_url=image_url,
+                    body=item.get('Description', '')
                 ):
                     new_count += 1
                     if self.last_news_id != 0:
@@ -371,7 +372,7 @@ def main():
     watcher = FinancialJuiceWatcher()
     
     if watcher.login():
-        print("Starting news polling (Every 60 seconds)...")
+        print("Starting news polling (Every 30 seconds)...")
         print("Economic Calendar sync scheduled for every 10 minutes.")
         
         # Initial sync on startup
@@ -389,7 +390,7 @@ def main():
                 watcher.poll_calendar()
                 last_sync_block = current_block
                 
-            time.sleep(60)
+            time.sleep(30)
 
 if __name__ == "__main__":
     main()
